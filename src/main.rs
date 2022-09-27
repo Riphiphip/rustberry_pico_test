@@ -1,13 +1,9 @@
-//! Blinks the LED on a Pico board
-//!
-//! This will blink an LED attached to GP25, which is the pin the Pico uses for the on-board LED.
 #![no_std]
 #![no_main]
 
-use bsp::{entry, hal::uart::Pins};
+use bsp::entry;
 use defmt::*;
 use defmt_rtt as _;
-use embedded_hal::digital::v2::OutputPin;
 use panic_probe as _;
 
 // Provide an alias for our BSP so we can switch targets quickly.
@@ -21,6 +17,8 @@ use bsp::hal::{
     sio::Sio,
     watchdog::Watchdog,
 };
+
+use embedded_hal::digital::v2::OutputPin;
 
 #[entry]
 fn main() -> ! {
@@ -53,28 +51,34 @@ fn main() -> ! {
 
     let pwm_slices = pwm::Slices::new(pac.PWM, &mut pac.RESETS);
 
-    let mut pwm = pwm_slices.pwm0;
+    let mut pwm = pwm_slices.pwm1;
     pwm.set_div_int(19);
     pwm.set_ph_correct();
     pwm.enable();
 
-    let mut led_pwm_channel = pwm.channel_a;
-    let _led_pwm_channel_pin = led_pwm_channel.output_to(pins.gpio0);
+    let mut motor_pwm_channel = pwm.channel_a;
+    let _led_pwm_channel_pin = motor_pwm_channel.output_to(pins.gpio2);
 
-    led_pwm_channel.enable();
+    let mut motor_ctrl_0 = pins.gpio3.into_push_pull_output();
+    let mut motor_ctrl_1 = pins.gpio4.into_push_pull_output();
+
+    motor_ctrl_0.set_high().unwrap();
+    motor_ctrl_1.set_low().unwrap();
+
+    motor_pwm_channel.enable();
 
     use embedded_hal::PwmPin;
-    led_pwm_channel.set_duty(0xffff / 2);
+    motor_pwm_channel.set_duty(0xffff / 2);
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().to_Hz());
 
     loop {
         info!("on!");
 
-        led_pwm_channel.set_duty(0xffff / 2);
+        motor_pwm_channel.set_duty(0xffff / 2);
         delay.delay_ms(500);
         info!("off!");
 
-        led_pwm_channel.set_duty(0xffff);
+        motor_pwm_channel.set_duty(0xffff);
         delay.delay_ms(500);
     }
 }

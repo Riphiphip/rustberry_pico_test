@@ -15,14 +15,13 @@
                 "interface/picoprobe.cfg",
                 "target/rp2040.cfg"
             ],
-            "svdFile": "${env:PICO_SDK_PATH}/src/rp2040/hardware_regs/rp2040.svd",
             // Work around for stopping at main on restart
             "postRestartCommands": [
                 "break main",
                 "continue"
             ],
             "searchDir": [
-                "<PATH TO TCL>"
+                "~/Projects/openocd/tcl/"
             ],
         }
     ]

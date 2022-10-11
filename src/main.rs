@@ -1,14 +1,10 @@
 #![no_std]
 #![no_main]
 
-use core::fmt::Write;
-
-use bsp::{
-    entry,
-    hal::uart::{self, UartPeripheral},
-};
+use bsp::{entry, hal::pio::InstalledProgram};
 use defmt::*;
-use defmt_serial as _;
+// use defmt_serial as _;
+use defmt_rtt as _;
 use panic_probe as _;
 
 // Provide an alias for our BSP so we can switch targets quickly.
@@ -17,7 +13,7 @@ use rp_pico as bsp;
 // use sparkfun_pro_micro_rp2040 as bsp;
 
 use bsp::hal::{
-    clocks::{init_clocks_and_plls, Clock},
+    clocks::init_clocks_and_plls,
     gpio, pac,
     pio::{PIOBuilder, PIOExt},
     pwm,
@@ -30,8 +26,8 @@ use embedded_hal::digital::v2::OutputPin;
 #[entry]
 fn main() -> ! {
     info!("Program start");
-    let mut pac = pac::Peripherals::take().unwrap();
-    let _core = pac::CorePeripherals::take().unwrap();
+    let mut pac = pac::Peripherals::take().expect("Could not take peripherals");
+    let _core = pac::CorePeripherals::take().expect("Could not take core peripherals");
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
     let sio = Sio::new(pac.SIO);
 
@@ -47,7 +43,7 @@ fn main() -> ! {
         &mut watchdog,
     )
     .ok()
-    .unwrap();
+    .expect("Could not set up clocks");
 
     let pins = bsp::Pins::new(
         pac.IO_BANK0,
@@ -56,24 +52,19 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    let uart_tx: rp_pico::Gp0Uart0Tx = pins.gpio0.into_mode();
-    let uart_rx: rp_pico::Gp1Uart0Rx = pins.gpio1.into_mode();
-    let uart_pins = (uart_tx, uart_rx);
-    let uart = UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
-        .enable(
-            uart::common_configs::_115200_8_N_1,
-            clocks.peripheral_clock.freq(),
-        )
-        .unwrap();
-    defmt_serial::defmt_serial(uart);
+    let _rc_chan_0_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio6.into_mode();
+    let rc_chan_0_pin_id = 6;
 
-    let _blink_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio6.into_mode();
-    let blink_pin_id = 6;
+    let _rc_chan_1_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio7.into_mode();
+    let rc_chan_1_pin_id = 7;
 
-    let _pio_debug_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio7.into_mode();
-    let _pio_debug_pin_id = 7;
+    let _rc_chan_2_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio8.into_mode();
+    let rc_chan_2_pin_id = 8;
 
-    let (mut pio0, sm0, _, _, _) = pac.PIO0.split(&mut pac.RESETS);
+    let _rc_chan_3_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio9.into_mode();
+    let rc_chan_3_pin_id = 9;
+
+    let (mut pio0, sm0, sm1, sm2, sm3) = pac.PIO0.split(&mut pac.RESETS);
 
     let pulse_width_program = {
         use pio::JmpCondition::{PinHigh, XDecNonZero};
@@ -117,14 +108,48 @@ fn main() -> ! {
 
         a.assemble_with_wrap(wrap_source, wrap_target)
     };
-    let installed = pio0.install(&pulse_width_program).unwrap();
-    let (sm, mut sm_rx, _tx) = PIOBuilder::from_program(installed)
-        .set_pins(blink_pin_id, 3)
-        .in_pin_base(blink_pin_id)
-        .jmp_pin(blink_pin_id)
-        .clock_divisor(2.0)
-        .build(sm0);
-    sm.start();
+
+    let installed = pio0
+        .install(&pulse_width_program)
+        .expect("Could not install to PIO0");
+
+    let (sm0_init, mut rc_chan_0, _) = unsafe {
+        PIOBuilder::from_program(installed.share())
+            .in_pin_base(rc_chan_0_pin_id)
+            .jmp_pin(rc_chan_0_pin_id)
+            .clock_divisor(2.0)
+            .build(sm0)
+    };
+
+    let (sm1_init, mut rc_chan_1, _) = unsafe {
+        PIOBuilder::from_program(installed.share())
+            .in_pin_base(rc_chan_1_pin_id)
+            .jmp_pin(rc_chan_1_pin_id)
+            .clock_divisor(2.0)
+            .build(sm1)
+    };
+
+    let (sm2_init, mut rc_chan_2, _) = unsafe {
+        PIOBuilder::from_program(installed.share())
+            .in_pin_base(rc_chan_2_pin_id)
+            .jmp_pin(rc_chan_2_pin_id)
+            .clock_divisor(2.0)
+            .build(sm2)
+    };
+
+    let (sm3_init, mut rc_chan_3, _) = unsafe {
+        PIOBuilder::from_program(installed.share())
+            .in_pin_base(rc_chan_3_pin_id)
+            .jmp_pin(rc_chan_3_pin_id)
+            .clock_divisor(2.0)
+            .build(sm3)
+    };
+
+    let _sm_group = sm0_init
+        .with(sm1_init)
+        .with(sm2_init)
+        .with(sm3_init)
+        .start();
 
     let pwm_slices = pwm::Slices::new(pac.PWM, &mut pac.RESETS);
 
@@ -140,8 +165,12 @@ fn main() -> ! {
     let mut motor_ctrl_0 = pins.gpio3.into_push_pull_output();
     let mut motor_ctrl_1 = pins.gpio4.into_push_pull_output();
 
-    motor_ctrl_0.set_high().unwrap();
-    motor_ctrl_1.set_low().unwrap();
+    motor_ctrl_0
+        .set_high()
+        .expect("Failed to set motor ctrl 0 high");
+    motor_ctrl_1
+        .set_low()
+        .expect("Failed to set motor ctrl 1 low");
 
     motor_pwm_channel.enable();
 
@@ -149,7 +178,7 @@ fn main() -> ! {
     motor_pwm_channel.set_duty(0);
 
     loop {
-        let rx_val = sm_rx.read();
+        let rx_val = rc_chan_0.read();
         match rx_val {
             Some(raw_value) => {
                 let min_cycles = 20300;
@@ -160,13 +189,16 @@ fn main() -> ! {
                 let increment = 0xFFFF / max_delta;
                 match delta.checked_mul(increment) {
                     Some(duty) => {
+                        info!("Duty: {}", duty);
                         motor_pwm_channel.set_duty(duty);
-                        info!("Duty: {}\r\n", duty);
                     }
                     None => motor_pwm_channel.set_duty(u16::MAX),
                 };
             }
-            _ => (),
+            None => {
+                info!("No reading. Turning off");
+                // motor_pwm_channel.set_duty(u16::MIN);
+            }
         }
     }
 }

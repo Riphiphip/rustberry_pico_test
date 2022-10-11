@@ -6,23 +6,15 @@
             "cwd": "${workspaceRoot}",
             "executable": "target/thumbv6m-none-eabi/debug/pico_test",
             "request": "launch",
+            "preLaunchTask": "rust: cargo build",
             "type": "cortex-debug",
-            "servertype": "openocd",
+            "servertype": "bmp",
+            "BMPGDBSerialPort": "/dev/ttyBMP",
+            "targetProcessor": 0,
             // This may need to be arm-none-eabi-gdb depending on your system
-            "gdbPath": "gdb-multiarch",
-            "device": "RP2040",
-            "configFiles": [
-                "interface/picoprobe.cfg",
-                "target/rp2040.cfg"
-            ],
+            "gdbPath": "/usr/bin/gdb-multiarch",
+            "device": "1"
             // Work around for stopping at main on restart
-            "postRestartCommands": [
-                "break main",
-                "continue"
-            ],
-            "searchDir": [
-                "~/Projects/openocd/tcl/"
-            ],
         }
     ]
 }

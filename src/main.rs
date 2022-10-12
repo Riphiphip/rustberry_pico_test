@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use bsp::{entry, hal::pio::InstalledProgram};
+use bsp::entry;
 use defmt::*;
 // use defmt_serial as _;
 use defmt_rtt as _;
@@ -23,6 +23,22 @@ use bsp::hal::{
 
 use embedded_hal::digital::v2::OutputPin;
 
+/** Parses a raw value read from the rc channel PIO peripheral
+   into a value that can be used as a duty cycle for a pwm channel.
+*/
+fn rc_chan_to_pwm(raw_value: u32, min: u16, max: u16) -> u16 {
+    let min_cycles = min;
+    let max_cycles = max;
+    let cycles = ((u32::MAX - raw_value) as u16).max(min_cycles);
+    let max_delta = (max_cycles - min_cycles).max(1);
+    let delta = cycles - min_cycles;
+    let increment = 0xFFFF / max_delta;
+    match delta.checked_mul(increment) {
+        Some(duty) => duty,
+        None => u16::MAX,
+    }
+}
+
 #[entry]
 fn main() -> ! {
     info!("Program start");
@@ -33,7 +49,7 @@ fn main() -> ! {
 
     // External high-speed crystal on the pico board is 12Mhz
     let external_xtal_freq_hz = 12_000_000u32;
-    let clocks = init_clocks_and_plls(
+    let _clocks = init_clocks_and_plls(
         external_xtal_freq_hz,
         pac.XOSC,
         pac.CLOCKS,
@@ -153,14 +169,29 @@ fn main() -> ! {
 
     let pwm_slices = pwm::Slices::new(pac.PWM, &mut pac.RESETS);
 
-    let mut pwm = pwm_slices.pwm1;
-    pwm.set_div_int(14);
-    pwm.set_div_frac(5);
-    pwm.set_ph_correct();
-    pwm.enable();
+    let mut pwm0 = pwm_slices.pwm0;
+    pwm0.set_div_int(14);
+    pwm0.set_div_frac(5);
+    pwm0.set_ph_correct();
+    pwm0.enable();
 
-    let mut motor_pwm_channel = pwm.channel_a;
-    let _led_pwm_channel_pin = motor_pwm_channel.output_to(pins.gpio2);
+    let mut rc_0_pwm_chan = pwm0.channel_a;
+    rc_0_pwm_chan.output_to(pins.gpio16);
+
+    let mut rc_1_pwm_chan = pwm0.channel_b;
+    rc_1_pwm_chan.output_to(pins.gpio17);
+
+    let mut pwm1 = pwm_slices.pwm1;
+    pwm1.set_div_int(14);
+    pwm1.set_div_frac(5);
+    pwm1.set_ph_correct();
+    pwm1.enable();
+
+    let mut rc_2_pwm_chan = pwm1.channel_a;
+    rc_2_pwm_chan.output_to(pins.gpio18);
+
+    let mut rc_3_pwm_chan = pwm1.channel_b;
+    rc_3_pwm_chan.output_to(pins.gpio19);
 
     let mut motor_ctrl_0 = pins.gpio3.into_push_pull_output();
     let mut motor_ctrl_1 = pins.gpio4.into_push_pull_output();
@@ -172,33 +203,47 @@ fn main() -> ! {
         .set_low()
         .expect("Failed to set motor ctrl 1 low");
 
-    motor_pwm_channel.enable();
-
     use embedded_hal::PwmPin;
-    motor_pwm_channel.set_duty(0);
+    rc_0_pwm_chan.set_duty(0);
+    rc_1_pwm_chan.set_duty(0);
+    rc_2_pwm_chan.set_duty(0);
+    rc_3_pwm_chan.set_duty(0);
 
     loop {
         let rx_val = rc_chan_0.read();
         match rx_val {
             Some(raw_value) => {
-                let min_cycles = 20300;
-                let max_cycles = 42000;
-                let cycles = ((u32::MAX - raw_value) as u16).max(min_cycles);
-                let max_delta = (max_cycles - min_cycles).max(1);
-                let delta = cycles - min_cycles;
-                let increment = 0xFFFF / max_delta;
-                match delta.checked_mul(increment) {
-                    Some(duty) => {
-                        info!("Duty: {}", duty);
-                        motor_pwm_channel.set_duty(duty);
-                    }
-                    None => motor_pwm_channel.set_duty(u16::MAX),
-                };
+                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
+                rc_0_pwm_chan.set_duty(duty);
             }
-            None => {
-                info!("No reading. Turning off");
-                // motor_pwm_channel.set_duty(u16::MIN);
+            None => {}
+        }
+
+        let rx_val = rc_chan_1.read();
+        match rx_val {
+            Some(raw_value) => {
+                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
+                rc_1_pwm_chan.set_duty(duty);
             }
+            None => {}
+        }
+
+        let rx_val = rc_chan_2.read();
+        match rx_val {
+            Some(raw_value) => {
+                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
+                rc_2_pwm_chan.set_duty(duty);
+            }
+            None => {}
+        }
+
+        let rx_val = rc_chan_3.read();
+        match rx_val {
+            Some(raw_value) => {
+                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
+                rc_3_pwm_chan.set_duty(duty);
+            }
+            None => {}
         }
     }
 }

@@ -7,6 +7,8 @@ use defmt::*;
 use defmt_rtt as _;
 use panic_probe as _;
 
+use micromath::F32Ext;
+
 // Provide an alias for our BSP so we can switch targets quickly.
 // Uncomment the BSP you included in Cargo.toml, the rest of the code does not need to change.
 use rp_pico as bsp;
@@ -68,17 +70,17 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    let _rc_chan_0_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio6.into_mode();
-    let rc_chan_0_pin_id = 6;
+    let _rc_chan_0_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio0.into_mode();
+    let rc_chan_0_pin_id = 0;
 
-    let _rc_chan_1_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio7.into_mode();
-    let rc_chan_1_pin_id = 7;
+    let _rc_chan_1_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio1.into_mode();
+    let rc_chan_1_pin_id = 1;
 
-    let _rc_chan_2_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio8.into_mode();
-    let rc_chan_2_pin_id = 8;
+    let _rc_chan_2_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio2.into_mode();
+    let rc_chan_2_pin_id = 2;
 
-    let _rc_chan_3_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio9.into_mode();
-    let rc_chan_3_pin_id = 9;
+    let _rc_chan_3_pin: gpio::Pin<_, gpio::FunctionPio0> = pins.gpio3.into_mode();
+    let rc_chan_3_pin_id = 3;
 
     let (mut pio0, sm0, sm1, sm2, sm3) = pac.PIO0.split(&mut pac.RESETS);
 
@@ -175,46 +177,90 @@ fn main() -> ! {
     pwm0.set_ph_correct();
     pwm0.enable();
 
-    let mut rc_0_pwm_chan = pwm0.channel_a;
-    rc_0_pwm_chan.output_to(pins.gpio16);
+    let mut motor_r_pwm_chan = pwm0.channel_a;
+    motor_r_pwm_chan.output_to(pins.gpio16);
 
-    let mut rc_1_pwm_chan = pwm0.channel_b;
-    rc_1_pwm_chan.output_to(pins.gpio17);
+    let mut pwm2 = pwm_slices.pwm2;
+    pwm2.set_div_int(14);
+    pwm2.set_div_frac(5);
+    pwm2.set_ph_correct();
+    pwm2.enable();
 
-    let mut pwm1 = pwm_slices.pwm1;
-    pwm1.set_div_int(14);
-    pwm1.set_div_frac(5);
-    pwm1.set_ph_correct();
-    pwm1.enable();
+    let mut motor_l_pwm_chan = pwm2.channel_a;
+    motor_l_pwm_chan.output_to(pins.gpio4);
 
-    let mut rc_2_pwm_chan = pwm1.channel_a;
-    rc_2_pwm_chan.output_to(pins.gpio18);
+    let mut magnet_l_pwm_chan = pwm2.channel_b;
+    magnet_l_pwm_chan.output_to(pins.gpio21);
 
-    let mut rc_3_pwm_chan = pwm1.channel_b;
-    rc_3_pwm_chan.output_to(pins.gpio19);
+    let mut pwm4 = pwm_slices.pwm4;
+    pwm4.set_div_int(14);
+    pwm4.set_div_frac(5);
+    pwm4.set_ph_correct();
+    pwm4.enable();
 
-    let mut motor_ctrl_0 = pins.gpio3.into_push_pull_output();
-    let mut motor_ctrl_1 = pins.gpio4.into_push_pull_output();
+    let mut magnet_r_pwm_chan = pwm4.channel_b;
+    magnet_r_pwm_chan.output_to(pins.gpio9);
 
-    motor_ctrl_0
+    let mut motor_l_ctrl_0 = pins.gpio5.into_push_pull_output();
+    let mut motor_l_ctrl_1 = pins.gpio6.into_push_pull_output();
+    motor_l_ctrl_0
+        .set_low()
+        .expect("Failed to set motor ctrl 0 low");
+    motor_l_ctrl_1
+        .set_low()
+        .expect("Failed to set motor ctrl 1 low");
+
+    let mut motor_r_ctrl_0 = pins.gpio17.into_push_pull_output();
+    let mut motor_r_ctrl_1 = pins.gpio18.into_push_pull_output();
+    motor_r_ctrl_0
+        .set_low()
+        .expect("Failed to set motor ctrl 0 low");
+    motor_r_ctrl_1
+        .set_low()
+        .expect("Failed to set motor ctrl 1 low");
+
+    let mut magnet_l_ctrl_0 = pins.gpio19.into_push_pull_output();
+    let mut magnet_l_ctrl_1 = pins.gpio20.into_push_pull_output();
+    magnet_l_ctrl_0
         .set_high()
         .expect("Failed to set motor ctrl 0 high");
-    motor_ctrl_1
+    magnet_l_ctrl_1
+        .set_low()
+        .expect("Failed to set motor ctrl 1 low");
+
+    let mut magnet_r_ctrl_0 = pins.gpio8.into_push_pull_output();
+    let mut magnet_r_ctrl_1 = pins.gpio7.into_push_pull_output();
+    magnet_r_ctrl_0
+        .set_high()
+        .expect("Failed to set motor ctrl 0 high");
+    magnet_r_ctrl_1
         .set_low()
         .expect("Failed to set motor ctrl 1 low");
 
     use embedded_hal::PwmPin;
-    rc_0_pwm_chan.set_duty(0);
-    rc_1_pwm_chan.set_duty(0);
-    rc_2_pwm_chan.set_duty(0);
-    rc_3_pwm_chan.set_duty(0);
+    motor_l_pwm_chan.set_duty(0);
+    motor_r_pwm_chan.set_duty(0);
+    magnet_l_pwm_chan.set_duty(0);
+    magnet_r_pwm_chan.set_duty(0);
+
+    let mut magnet_pwm_duty = 0;
+
+    struct StickPos {
+        x: f32,
+        y: f32,
+    }
+
+    let mut current_pos = StickPos { x: 0.0, y: 0.0 };
 
     loop {
         let rx_val = rc_chan_0.read();
         match rx_val {
             Some(raw_value) => {
-                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
-                rc_0_pwm_chan.set_duty(duty);
+                current_pos.x = rc_chan_to_pwm(raw_value, 20300, 42000).into();
+                current_pos.x -= (u16::MAX / 2) as f32;
+                if current_pos.x < 100.0 {
+                    current_pos.x = 0.0;
+                }
             }
             None => {}
         }
@@ -222,8 +268,11 @@ fn main() -> ! {
         let rx_val = rc_chan_1.read();
         match rx_val {
             Some(raw_value) => {
-                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
-                rc_1_pwm_chan.set_duty(duty);
+                current_pos.y = rc_chan_to_pwm(raw_value, 20300, 42000).into();
+                current_pos.y -= (u16::MAX / 2) as f32;
+                if current_pos.y < 100.0 {
+                    current_pos.y = 0.0;
+                }
             }
             None => {}
         }
@@ -231,8 +280,7 @@ fn main() -> ! {
         let rx_val = rc_chan_2.read();
         match rx_val {
             Some(raw_value) => {
-                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
-                rc_2_pwm_chan.set_duty(duty);
+                magnet_pwm_duty = rc_chan_to_pwm(raw_value, 20300, 42000);
             }
             None => {}
         }
@@ -240,11 +288,21 @@ fn main() -> ! {
         let rx_val = rc_chan_3.read();
         match rx_val {
             Some(raw_value) => {
-                let duty = rc_chan_to_pwm(raw_value, 20300, 42000);
-                rc_3_pwm_chan.set_duty(duty);
+                let switch_reading = rc_chan_to_pwm(raw_value, 20300, 42000);
+                if switch_reading > u16::MAX / 2 {
+                    magnet_l_pwm_chan.set_duty(magnet_pwm_duty);
+                    magnet_r_pwm_chan.set_duty(magnet_pwm_duty);
+                } else {
+                    magnet_l_pwm_chan.set_duty(0);
+                    magnet_r_pwm_chan.set_duty(0);
+                }
             }
             None => {}
         }
+
+        // Set motors
+        motor_l_ctrl_0.set_high().unwrap();
+        motor_l_pwm_chan.set_duty(unsafe { current_pos.x.to_int_unchecked() });
     }
 }
 
